@@ -14,7 +14,7 @@ Standard agent workflows either:
 1. **Tool `prime`**: Automatically generates a high-density, bounded Context Bundle (<1,200 tokens) in sub-50ms.
 2. **Command `/prime`**: Allows instant manual execution from the terminal input bar.
 3. **TypeSafe Jev Integration**: Calibrated judgment of current active engineering phase (`clean_slate`, `active_development`, `testing_and_fixing`) and uncommitted change risk.
-4. **Automatic Prompt Injection**: Seamlessly injects the bundle into session guidelines without polluting the transcript.
+4. **Prompt Delivery**: Adds the bundle to the conversation as a hidden custom message with your next prompt, so it stays in context on later turns.
 
 ## Verification
 
