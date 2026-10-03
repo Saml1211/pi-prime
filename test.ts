@@ -1,33 +1,14 @@
 import assert from "node:assert";
 import fs from "node:fs";
 import path from "node:path";
+import os from "node:os";
 import registerPrime, { assembleContextBundle } from "./index.ts";
 
-console.log("=== Testing pi-prime extension ===");
+console.log("=== Testing pi-prime extension (Hardened) ===");
 
-const cwd = process.cwd();
-
-// 1. Bundle Assembly Test
-console.log("Testing assembleContextBundle in cwd:", cwd);
-const bundle = await assembleContextBundle(cwd, { includeDiffSummary: true });
-
-assert(bundle.markdown, "Bundle markdown must not be empty");
-assert(bundle.branch, "Branch must be resolved");
-assert(typeof bundle.dirtyFilesCount === "number", "dirtyFilesCount must be a number");
-assert(bundle.markdown.includes("Dynamic Context Bundle"), "Markdown must have bundle header");
-assert(bundle.markdown.includes("Branch:"), "Markdown must show branch");
-console.log("✓ Context bundle assembled cleanly:");
-console.log("  - Branch:", bundle.branch);
-console.log("  - Dirty files count:", bundle.dirtyFilesCount);
-console.log("  - Stack detected:", bundle.stack);
-if (bundle.jevVerdict) {
-  console.log("  - Jev working state:", bundle.jevVerdict);
-}
-
-// 2. Extension Tool and Command Registration Test
 const registeredTools = new Map();
 const registeredCommands = new Map();
-const eventHandlers = new Map();
+const registeredHandlers = new Map();
 
 const mockPi = {
   registerTool(tool: any) {
@@ -36,9 +17,8 @@ const mockPi = {
   registerCommand(name: string, cmd: any) {
     registeredCommands.set(name, cmd);
   },
-  on(event: string, handler: any) {
-    if (!eventHandlers.has(event)) eventHandlers.set(event, []);
-    eventHandlers.get(event).push(handler);
+  on(event: string, handler: Function) {
+    registeredHandlers.set(event, handler);
   },
 };
 
@@ -46,26 +26,38 @@ registerPrime(mockPi as any);
 
 assert(registeredTools.has("prime"), "prime tool must be registered");
 assert(registeredCommands.has("prime"), "/prime command must be registered");
-assert(eventHandlers.has("before_agent_start"), "before_agent_start handler must be registered");
-console.log("✓ Tool 'prime' and command '/prime' verified");
-
-// 3. Tool Execution Test
 const primeTool = registeredTools.get("prime");
-const mockContext: any = { cwd };
-const execRes = await primeTool.execute("call-prime-1", { includeDiffSummary: true }, mockContext);
+console.log("✓ Tool and command registrations verified");
 
-assert(execRes.content[0].text.includes("Dynamic Context Bundle"), "Tool execution must output markdown bundle");
-console.log("✓ prime tool executed successfully and generated bundle");
+// 1. Five-argument tool execute test
+const mockCtx: any = {
+  cwd: process.cwd(),
+  ui: { notify: () => {} },
+};
 
-// 4. Guideline Injection Test
-const beforeStartHandler = eventHandlers.get("before_agent_start")?.[0];
-const startEvent: any = { systemPromptOptions: {} };
-await beforeStartHandler(startEvent, mockContext);
+const controller = new AbortController();
+const toolRes = await primeTool.execute("call-prime-1", { includeDiffSummary: true }, controller.signal, () => {}, mockCtx);
+assert(toolRes.content[0].text.includes("Dynamic Context Bundle"), "Must output bundle");
+console.log("✓ Pi 5-argument tool.execute contract verified");
 
-assert(
-  startEvent.systemPromptOptions.guidelines.some((g: string) => g.includes("ACTIVE TASK CONTEXT BUNDLE")),
-  "before_agent_start must inject context bundle into guidelines"
-);
-console.log("✓ Bundle guideline injection verified post-prime execution");
+// 2. Non-git directory handling test
+const nonGitDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-nongit-"));
+try {
+  const nonGitBundle = await assembleContextBundle(nonGitDir);
+  assert.equal(nonGitBundle.isGitRepo, false, "Must detect non-git directory");
+  assert(nonGitBundle.markdown.includes("Not a git repository"), "Must report 'Not a git repository', not clean tree");
+  console.log("✓ Non-git directory handling verified (prevents false clean-tree claims)");
+} finally {
+  fs.rmSync(nonGitDir, { recursive: true, force: true });
+}
 
-console.log("\nALL TESTS PASSED! pi-prime is fully verified.");
+// 3. Prompt guidelines hook test
+const beforeHandler = registeredHandlers.get("before_agent_start");
+assert(beforeHandler, "before_agent_start handler must be registered");
+const mockEvent: any = {};
+await beforeHandler(mockEvent, mockCtx);
+assert(Array.isArray(mockEvent.promptGuidelines), "promptGuidelines array must be populated");
+assert(mockEvent.promptGuidelines[0].includes("ACTIVE TASK CONTEXT BUNDLE"), "Bundle must be injected into guidelines");
+console.log("✓ before_agent_start promptGuidelines injection verified");
+
+console.log("\nALL TESTS PASSED! pi-prime is fully hardened.");

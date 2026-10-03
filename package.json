@@ -1,17 +1,16 @@
 {
   "name": "pi-prime",
-  "version": "1.0.0",
-  "description": "Dynamic context priming and task bundle assembler for Pi Coding Agent, powered by TypeSafe Jev state evaluation",
+  "version": "1.0.1",
+  "description": "Dynamic context bundle priming & Jev state analysis for Pi Coding Agent",
   "main": "index.ts",
   "scripts": {
-    "test": "node --input-type=module test.ts"
+    "test": "bun run test.ts"
   },
   "keywords": [
     "pi-extension",
     "context-priming",
-    "context-bundle",
-    "typesafe",
-    "jev",
+    "prompt-injection",
+    "typesafe-jev",
     "indydevdan"
   ],
   "author": "Sam Lyndon",

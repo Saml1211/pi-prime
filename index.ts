@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { join, basename } from "node:path";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { execSync } from "node:child_process";
 import type {
   ExtensionAPI,
@@ -41,13 +41,15 @@ export interface ContextBundleResult {
   dirtyFilesCount: number;
   stack: string;
   jevVerdict?: string;
+  isGitRepo: boolean;
 }
 
-function safeExec(cmd: string, cwd: string, timeout = 2000): string {
+function safeExecGit(cmd: string, cwd: string, timeout = 2500): { ok: boolean; stdout: string } {
   try {
-    return execSync(cmd, { cwd, encoding: "utf8", timeout, stdio: ["ignore", "pipe", "ignore"] }).trim();
+    const stdout = execSync(cmd, { cwd, encoding: "utf8", timeout, stdio: ["ignore", "pipe", "ignore"] }).trim();
+    return { ok: true, stdout };
   } catch {
-    return "";
+    return { ok: false, stdout: "" };
   }
 }
 
@@ -96,10 +98,14 @@ export async function evaluateStateWithJev(
     const answers = json?.answers;
     if (!answers) return null;
 
-    return {
-      workingPhase: answers.working_phase?.choice ?? "active_development",
-      uncommittedRisk: answers.uncommitted_risk?.noul ?? 0.5,
-    };
+    const allowedPhases = ["clean_slate", "active_development", "testing_and_fixing", "ready_for_review"];
+    const phaseRaw = answers.working_phase?.choice;
+    const workingPhase = allowedPhases.includes(phaseRaw) ? phaseRaw : "active_development";
+
+    const riskRaw = answers.uncommitted_risk?.noul;
+    const uncommittedRisk = typeof riskRaw === "number" && Number.isFinite(riskRaw) ? riskRaw : 0.5;
+
+    return { workingPhase, uncommittedRisk };
   } catch {
     return null;
   } finally {
@@ -115,25 +121,40 @@ export async function assembleContextBundle(
 ): Promise<ContextBundleResult> {
   const includeDiff = opts.includeDiffSummary !== false;
 
-  // 1. Git State
-  const branch = safeExec("git rev-parse --abbrev-ref HEAD", cwd) || "unknown";
-  const commit = safeExec("git log -n 1 --oneline", cwd) || "none";
-  const rawStatus = safeExec("git status --short", cwd);
-  const statusLines = rawStatus ? rawStatus.split("\n") : [];
-  const dirtyFilesCount = statusLines.length;
+  // 1. Git State Inspection
+  const gitCheck = safeExecGit("git rev-parse --is-inside-work-tree", cwd);
+  const isGitRepo = gitCheck.ok && gitCheck.stdout === "true";
 
-  let statusSummary = statusLines.slice(0, 15).join("\n");
-  if (statusLines.length > 15) {
-    statusSummary += `\n... (+${statusLines.length - 15} more dirty files)`;
-  }
-
+  let branch = "not-git";
+  let commit = "none";
+  let dirtyFilesCount = 0;
+  let statusSummary = "";
   let diffSummary = "";
-  if (includeDiff && dirtyFilesCount > 0) {
-    const rawDiff = safeExec("git diff --stat", cwd);
-    const diffLines = rawDiff ? rawDiff.split("\n") : [];
-    diffSummary = diffLines.slice(0, 12).join("\n");
-    if (diffLines.length > 12) {
-      diffSummary += `\n... (+${diffLines.length - 12} more changed files)`;
+
+  if (isGitRepo) {
+    const branchRes = safeExecGit("git branch --show-current || git rev-parse --abbrev-ref HEAD", cwd);
+    branch = branchRes.ok && branchRes.stdout ? branchRes.stdout : "detached";
+
+    const commitRes = safeExecGit("git log -n 1 --oneline", cwd);
+    commit = commitRes.ok && commitRes.stdout ? commitRes.stdout : "none";
+
+    const statusRes = safeExecGit("git status --short", cwd);
+    if (statusRes.ok) {
+      const statusLines = statusRes.stdout ? statusRes.stdout.split("\n").filter((l) => l.trim().length > 0) : [];
+      dirtyFilesCount = statusLines.length;
+      statusSummary = statusLines.slice(0, 15).join("\n");
+      if (statusLines.length > 15) {
+        statusSummary += `\n... (+${statusLines.length - 15} more dirty files)`;
+      }
+    }
+
+    if (includeDiff && dirtyFilesCount > 0) {
+      const unstagedDiff = safeExecGit("git diff --stat", cwd);
+      const stagedDiff = safeExecGit("git diff --cached --stat", cwd);
+      const diffParts: string[] = [];
+      if (stagedDiff.stdout) diffParts.push(`Staged:\n${stagedDiff.stdout}`);
+      if (unstagedDiff.stdout) diffParts.push(`Unstaged:\n${unstagedDiff.stdout}`);
+      diffSummary = diffParts.join("\n\n").slice(0, 1500);
     }
   }
 
@@ -160,9 +181,9 @@ export async function assembleContextBundle(
   if (existsSync(join(cwd, "Makefile"))) stackItems.push("Makefile");
   const stack = stackItems.length > 0 ? stackItems.join(" | ") : "Generic directory";
 
-  // 3. Task / Continuation State
+  // 3. Task / Continuation State (scoped by path)
   let continuationNote = "";
-  const lastNotePath = join(homedir(), ".pi/state/self-compact-last-note.md");
+  const lastNotePath = join(homedir(), ".pi/state/last-continuation-note.md");
   if (existsSync(lastNotePath)) {
     try {
       const noteRaw = readFileSync(lastNotePath, "utf8").trim();
@@ -174,7 +195,7 @@ export async function assembleContextBundle(
 
   // 4. TypeSafe Jev Working State Check
   let jevVerdict = "";
-  if (jevApiKey) {
+  if (jevApiKey && isGitRepo) {
     const stateSummary = `Branch: ${branch}. Dirty files: ${dirtyFilesCount}. Commit: ${commit}. Stack: ${stack}.`;
     const jevRes = await evaluateStateWithJev(stateSummary, jevApiKey, signal);
     if (jevRes) {
@@ -188,7 +209,13 @@ export async function assembleContextBundle(
     `### ⚡ Dynamic Context Bundle (${basename(cwd)})`,
     `- **Branch:** \`${branch}\` | **Commit:** \`${commit}\``,
     `- **Stack:** ${stack}`,
-    `- **Git Status:** ${dirtyFilesCount === 0 ? "Clean tree" : `${dirtyFilesCount} modified/untracked files`}`,
+    `- **Git Status:** ${
+      !isGitRepo
+        ? "Not a git repository"
+        : dirtyFilesCount === 0
+        ? "Clean tree"
+        : `${dirtyFilesCount} modified/untracked files`
+    }`,
   ];
 
   if (jevVerdict) {
@@ -213,6 +240,7 @@ export async function assembleContextBundle(
     dirtyFilesCount,
     stack,
     jevVerdict: jevVerdict || undefined,
+    isGitRepo,
   };
 }
 
@@ -220,7 +248,7 @@ export default function (pi: ExtensionAPI) {
   const jevApiKey = resolveJevApiKey();
   let pendingBundle: string | null = null;
 
-  // 1. Tool: prime
+  // 1. Tool: prime (conforming to Pi's 5-argument execute signature)
   pi.registerTool({
     name: "prime",
     label: "Prime Context Bundle",
@@ -232,16 +260,19 @@ export default function (pi: ExtensionAPI) {
         Type.Boolean({ description: "Whether to include a git diff stat summary (default: true)" }),
       ),
     }),
-    async execute(_id, params, ctx: ExtensionContext) {
-      const cwd = ctx.cwd || process.cwd();
-      const bundle = await assembleContextBundle(cwd, params, jevApiKey, ctx.signal);
+    async execute(_id, params, signal, _onUpdate, ctx) {
+      const effectiveCtx: ExtensionContext | undefined = ctx || (signal && (signal as any).cwd ? (signal as any) : undefined);
+      const effectiveSignal: AbortSignal | undefined = signal instanceof AbortSignal ? signal : effectiveCtx?.signal;
+      const cwd = effectiveCtx?.cwd || process.cwd();
+
+      const bundle = await assembleContextBundle(cwd, params, jevApiKey, effectiveSignal);
       pendingBundle = bundle.markdown;
 
       return {
         content: [
           {
             type: "text",
-            text: `${bundle.markdown}\n\n[Context primed successfully. Bundle injected into active guidelines for upcoming turns.]`,
+            text: `${bundle.markdown}\n\n[Context primed successfully. Bundle injected into prompt guidelines.]`,
           },
         ],
       };
@@ -264,11 +295,10 @@ export default function (pi: ExtensionAPI) {
   });
 
   // 3. Inject primed bundle into active guidelines on next turn
-  pi.on("before_agent_start", async (_event, ctx: ExtensionContext) => {
+  pi.on("before_agent_start", async (event, _ctx: ExtensionContext) => {
     if (pendingBundle) {
-      _event.systemPromptOptions = _event.systemPromptOptions || {};
-      _event.systemPromptOptions.guidelines = _event.systemPromptOptions.guidelines || [];
-      _event.systemPromptOptions.guidelines.push(`[ACTIVE TASK CONTEXT BUNDLE]:\n${pendingBundle}`);
+      const guidelines = (event.promptGuidelines = event.promptGuidelines || []);
+      guidelines.push(`[ACTIVE TASK CONTEXT BUNDLE]:\n${pendingBundle}`);
       pendingBundle = null;
     }
   });
