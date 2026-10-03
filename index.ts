@@ -129,7 +129,8 @@ export function noteBackupPathFor(cwd: string, env: NodeJS.ProcessEnv = process.
 export function readWorkspaceNote(cwd: string): string {
   try {
     const raw = readFileSync(noteBackupPathFor(cwd), "utf8");
-    const m = raw.match(/^<!-- self-compact cwd: (".*?") saved: \S+ -->\n/);
+    // [\s\S] not `.`: JSON.stringify leaves U+2028/U+2029 raw, and `.` does not match them
+    const m = raw.match(/^<!-- self-compact cwd: ("[\s\S]*?") saved: \S+ -->\n/);
     if (!m || JSON.parse(m[1]) !== cwd) return "";
     return raw.slice(m[0].length).trim();
   } catch {
@@ -250,7 +251,8 @@ export async function assembleContextBundle(
   }
 
   let markdown = sections.join("\n");
-  if (markdown.length > MAX_BUNDLE_CHARS) markdown = markdown.slice(0, MAX_BUNDLE_CHARS) + "\n… (bundle truncated)";
+  const marker = "\n… (bundle truncated)";
+  if (markdown.length > MAX_BUNDLE_CHARS) markdown = markdown.slice(0, MAX_BUNDLE_CHARS - marker.length) + marker; // cap includes the marker
 
   return {
     markdown,

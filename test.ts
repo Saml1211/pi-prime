@@ -88,8 +88,18 @@ console.log("\nALL TESTS PASSED! pi-prime is fully hardened.");
   const g = (...args: string[]) => cp.execFileSync("git", args, { cwd: a, stdio: "ignore" });
   g("init", "-q"); fs.writeFileSync(path.join(a, "f"), "x");
   g("add", "f"); g("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "S".repeat(50000));
+  // tracked long-named files, then modified: long status lines AND a long diff stat, plus a 600-char note
   for (let i = 0; i < 30; i++) fs.writeFileSync(path.join(a, "p".repeat(200) + i), "x");
+  g("add", "-A"); g("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "files");
+  for (let i = 0; i < 30; i++) fs.writeFileSync(path.join(a, "p".repeat(200) + i), "y\n".repeat(50));
+  for (let i = 0; i < 30; i++) fs.writeFileSync(path.join(a, "u".repeat(200) + i), "x");
+  write(a, a, "N".repeat(5000));
   const big = await assembleContextBundle(a);
-  assert.ok(big.markdown.length <= MAX_BUNDLE_CHARS + 30, `bundle ${big.markdown.length} chars exceeds cap`);
+  assert.ok(big.markdown.length <= MAX_BUNDLE_CHARS, `bundle ${big.markdown.length} chars exceeds the ${MAX_BUNDLE_CHARS} cap`);
+  // U+2028 in a cwd must still round-trip (JSON.stringify leaves it raw)
+  const odd = path.join(tmp, "odd\u2028dir");
+  fs.mkdirSync(odd);
+  write(odd, odd, "odd note");
+  assert.match((await assembleContextBundle(odd)).markdown, /odd note/, "U+2028 cwd header must parse");
   console.log(`✓ notes scoped to the exact workspace; bundle capped (${big.markdown.length} chars with a 50K commit subject)`);
 }
