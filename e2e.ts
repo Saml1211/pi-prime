@@ -8,7 +8,7 @@ import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
 import prime from "./index.ts";
 
 delete process.env.TYPESAFE_API_KEY; // no Jev network calls
-process.env.HOME = mkdtempSync(join(tmpdir(), "pi-prime-home-"));
+process.env.PI_SELF_COMPACT_STATE_DIR = mkdtempSync(join(tmpdir(), "pi-prime-state-")); // never read real notes
 const dir = mkdtempSync(join(tmpdir(), "pi-prime-e2e-"));
 const faux = fauxProvider({ models: [{ id: "faux", contextWindow: 100000, maxTokens: 500 }] });
 const seen: string[] = [];

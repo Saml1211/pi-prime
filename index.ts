@@ -1,4 +1,5 @@
 import { homedir } from "node:os";
+import { createHash } from "node:crypto";
 import { join, basename } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
 import { execSync } from "node:child_process";
@@ -113,6 +114,29 @@ export async function evaluateStateWithJev(
   }
 }
 
+// ~1,200 tokens. Repo metadata (commit subjects, paths, script names) is untrusted and unbounded,
+// so each field is clipped and the whole bundle is hard-capped before it reaches the model.
+export const MAX_BUNDLE_CHARS = 4800;
+const clip = (v: string, n: number) => (v.length > n ? v.slice(0, n) + "…" : v);
+
+// Same scheme as self-compact's noteBackupPathFor (separate repos, so duplicated; keep in sync).
+export function noteBackupPathFor(cwd: string, env: NodeJS.ProcessEnv = process.env): string {
+  const root = env.PI_SELF_COMPACT_STATE_DIR || join(homedir(), ".pi/state/continuation-notes");
+  return join(root, `${createHash("sha256").update(cwd).digest("hex").slice(0, 16)}.md`);
+}
+
+// Returns the note only if its header names exactly this workspace; never another repo's note.
+export function readWorkspaceNote(cwd: string): string {
+  try {
+    const raw = readFileSync(noteBackupPathFor(cwd), "utf8");
+    const m = raw.match(/^<!-- self-compact cwd: (".*?") saved: \S+ -->\n/);
+    if (!m || JSON.parse(m[1]) !== cwd) return "";
+    return raw.slice(m[0].length).trim();
+  } catch {
+    return "";
+  }
+}
+
 export async function assembleContextBundle(
   cwd: string,
   opts: ContextBundleOptions = {},
@@ -133,16 +157,16 @@ export async function assembleContextBundle(
 
   if (isGitRepo) {
     const branchRes = safeExecGit("git branch --show-current || git rev-parse --abbrev-ref HEAD", cwd);
-    branch = branchRes.ok && branchRes.stdout ? branchRes.stdout : "detached";
+    branch = branchRes.ok && branchRes.stdout ? clip(branchRes.stdout, 100) : "detached";
 
     const commitRes = safeExecGit("git log -n 1 --oneline", cwd);
-    commit = commitRes.ok && commitRes.stdout ? commitRes.stdout : "none";
+    commit = commitRes.ok && commitRes.stdout ? clip(commitRes.stdout, 160) : "none";
 
     const statusRes = safeExecGit("git status --short", cwd);
     if (statusRes.ok) {
       const statusLines = statusRes.stdout ? statusRes.stdout.split("\n").filter((l) => l.trim().length > 0) : [];
       dirtyFilesCount = statusLines.length;
-      statusSummary = statusLines.slice(0, 15).join("\n");
+      statusSummary = statusLines.slice(0, 15).map((l) => clip(l, 160)).join("\n");
       if (statusLines.length > 15) {
         statusSummary += `\n... (+${statusLines.length - 15} more dirty files)`;
       }
@@ -169,7 +193,7 @@ export async function assembleContextBundle(
       else if (existsSync(join(cwd, "pnpm-lock.yaml"))) pm = "pnpm";
       else if (existsSync(join(cwd, "yarn.lock"))) pm = "yarn";
 
-      const scripts = pkg.scripts ? Object.keys(pkg.scripts).slice(0, 8).join(", ") : "none";
+      const scripts = pkg.scripts ? Object.keys(pkg.scripts).slice(0, 8).map((k) => clip(k, 40)).join(", ") : "none";
       stackItems.push(`Node/TS (${pm}): scripts [${scripts}]`);
     } catch {}
   }
@@ -181,17 +205,8 @@ export async function assembleContextBundle(
   if (existsSync(join(cwd, "Makefile"))) stackItems.push("Makefile");
   const stack = stackItems.length > 0 ? stackItems.join(" | ") : "Generic directory";
 
-  // 3. Task / Continuation State (scoped by path)
-  let continuationNote = "";
-  const lastNotePath = join(homedir(), ".pi/state/last-continuation-note.md");
-  if (existsSync(lastNotePath)) {
-    try {
-      const noteRaw = readFileSync(lastNotePath, "utf8").trim();
-      if (noteRaw.length > 0) {
-        continuationNote = noteRaw.slice(0, 600);
-      }
-    } catch {}
-  }
+  // 3. Continuation note for THIS workspace only (written by self-compact)
+  const continuationNote = clip(readWorkspaceNote(cwd), 600);
 
   // 4. TypeSafe Jev Working State Check
   let jevVerdict = "";
@@ -234,8 +249,11 @@ export async function assembleContextBundle(
     sections.push(`\n**Preserved Continuation State:**\n> ${continuationNote.replace(/\n/g, "\n> ")}`);
   }
 
+  let markdown = sections.join("\n");
+  if (markdown.length > MAX_BUNDLE_CHARS) markdown = markdown.slice(0, MAX_BUNDLE_CHARS) + "\n… (bundle truncated)";
+
   return {
-    markdown: sections.join("\n"),
+    markdown,
     branch,
     dirtyFilesCount,
     stack,

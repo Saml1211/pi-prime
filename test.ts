@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import registerPrime, { assembleContextBundle } from "./index.ts";
+process.env.PI_SELF_COMPACT_STATE_DIR = (await import("node:fs")).mkdtempSync((await import("node:path")).join((await import("node:os")).tmpdir(), "prime-state-")); // never read real notes
 
 console.log("=== Testing pi-prime extension (Hardened) ===");
 
@@ -61,3 +62,34 @@ assert.equal(await beforeHandler({ type: "before_agent_start", prompt: "y" }, mo
 console.log("✓ before_agent_start returns the bundle as a message, once (real delivery: e2e.ts)");
 
 console.log("\nALL TESTS PASSED! pi-prime is fully hardened.");
+
+
+// Workspace scoping + aggregate size bound
+{
+  const fs = await import("node:fs");
+  const path = await import("node:path");
+  const os = await import("node:os");
+  const cp = await import("node:child_process");
+  const { assembleContextBundle, noteBackupPathFor, MAX_BUNDLE_CHARS } = await import("./index.ts");
+  const assert = (await import("node:assert")).default;
+  const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "prime-ws-")));
+  const a = path.join(tmp, "a"), b = path.join(tmp, "b");
+  fs.mkdirSync(a); fs.mkdirSync(b);
+  const write = (cwd: string, header: string, note: string) => {
+    fs.mkdirSync(path.dirname(noteBackupPathFor(cwd)), { recursive: true });
+    fs.writeFileSync(noteBackupPathFor(cwd), `<!-- self-compact cwd: ${JSON.stringify(header)} saved: 2026-10-03T00:00:00.000Z -->\n${note}\n`);
+  };
+  write(a, a, "repo A secret plan");
+  assert.match((await assembleContextBundle(a)).markdown, /repo A secret plan/, "own workspace note is included");
+  assert.doesNotMatch((await assembleContextBundle(b)).markdown, /repo A secret plan/, "another workspace's note is never included");
+  write(b, a, "forged header"); // file at B's path but header says A
+  assert.doesNotMatch((await assembleContextBundle(b)).markdown, /forged header/, "header must match the workspace exactly");
+  // huge commit subject + long paths cannot blow the budget
+  const g = (...args: string[]) => cp.execFileSync("git", args, { cwd: a, stdio: "ignore" });
+  g("init", "-q"); fs.writeFileSync(path.join(a, "f"), "x");
+  g("add", "f"); g("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "S".repeat(50000));
+  for (let i = 0; i < 30; i++) fs.writeFileSync(path.join(a, "p".repeat(200) + i), "x");
+  const big = await assembleContextBundle(a);
+  assert.ok(big.markdown.length <= MAX_BUNDLE_CHARS + 30, `bundle ${big.markdown.length} chars exceeds cap`);
+  console.log(`✓ notes scoped to the exact workspace; bundle capped (${big.markdown.length} chars with a 50K commit subject)`);
+}

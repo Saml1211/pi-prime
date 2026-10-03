@@ -28,3 +28,8 @@ node --input-type=module test.ts
 bun run test.ts   # unit
 bun run e2e.ts    # real Pi AgentSession + faux provider: bundle reaches the model and persists
 ```
+
+## Bounds and scoping
+
+- The bundle is hard-capped at 4,800 characters (about 1,200 tokens). Commit subjects, status paths and script names are clipped one by one first, because repo metadata is untrusted and unbounded.
+- The continuation note comes only from self-compact's per-workspace backup, `~/.pi/state/continuation-notes/<sha256(cwd)[:16]>.md`, and only when its header names exactly this workspace. Another repo's note is never replayed.
