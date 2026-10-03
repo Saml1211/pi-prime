@@ -54,10 +54,10 @@ try {
 // 3. Prompt guidelines hook test
 const beforeHandler = registeredHandlers.get("before_agent_start");
 assert(beforeHandler, "before_agent_start handler must be registered");
-const mockEvent: any = {};
-await beforeHandler(mockEvent, mockCtx);
-assert(Array.isArray(mockEvent.promptGuidelines), "promptGuidelines array must be populated");
-assert(mockEvent.promptGuidelines[0].includes("ACTIVE TASK CONTEXT BUNDLE"), "Bundle must be injected into guidelines");
-console.log("✓ before_agent_start promptGuidelines injection verified");
+const injected = await beforeHandler({ type: "before_agent_start", prompt: "x" }, mockCtx);
+assert.equal(injected?.message?.customType, "pi-prime-bundle", "bundle must be returned as a before_agent_start message");
+assert(injected.message.content.includes("ACTIVE TASK CONTEXT BUNDLE"));
+assert.equal(await beforeHandler({ type: "before_agent_start", prompt: "y" }, mockCtx), undefined, "bundle is delivered once");
+console.log("✓ before_agent_start returns the bundle as a message, once (real delivery: e2e.ts)");
 
 console.log("\nALL TESTS PASSED! pi-prime is fully hardened.");

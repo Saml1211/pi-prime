@@ -21,3 +21,10 @@ Standard agent workflows either:
 ```bash
 node --input-type=module test.ts
 ```
+
+## Verification
+
+```bash
+bun run test.ts   # unit
+bun run e2e.ts    # real Pi AgentSession + faux provider: bundle reaches the model and persists
+```

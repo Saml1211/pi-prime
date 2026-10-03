@@ -294,12 +294,13 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
-  // 3. Inject primed bundle into active guidelines on next turn
-  pi.on("before_agent_start", async (event, _ctx: ExtensionContext) => {
-    if (pendingBundle) {
-      const guidelines = (event.promptGuidelines = event.promptGuidelines || []);
-      guidelines.push(`[ACTIVE TASK CONTEXT BUNDLE]:\n${pendingBundle}`);
-      pendingBundle = null;
-    }
+  // 3. Deliver the primed bundle with the next prompt. before_agent_start has no top-level
+  // promptGuidelines field; returning `message` puts the bundle in the conversation, where it
+  // persists across turns (a systemPromptOptions edit would last for one run only).
+  pi.on("before_agent_start", async () => {
+    if (!pendingBundle) return;
+    const content = `[ACTIVE TASK CONTEXT BUNDLE]:\n${pendingBundle}`;
+    pendingBundle = null;
+    return { message: { customType: "pi-prime-bundle", content, display: false } };
   });
 }
