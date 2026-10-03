@@ -1,6 +1,6 @@
 {
   "name": "pi-prime",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "Dynamic context bundle priming & Jev state analysis for Pi Coding Agent",
   "main": "index.ts",
   "scripts": {
@@ -12,7 +12,8 @@
     "context-priming",
     "prompt-injection",
     "typesafe-jev",
-    "indydevdan"
+    "indydevdan",
+    "pi-package"
   ],
   "author": "Sam Lyndon",
   "license": "MIT",
@@ -20,5 +21,10 @@
     "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-coding-agent": "*",
     "@sinclair/typebox": "*"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
   }
 }
