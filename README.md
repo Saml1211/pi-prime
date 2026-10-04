@@ -25,7 +25,7 @@ node --input-type=module test.ts
 ## Verification
 
 ```bash
-bun run test.ts   # unit
+bun run test      # unit + isolated Git-status regressions
 bun run e2e.ts    # real Pi AgentSession + faux provider: bundle reaches the model and persists
 ```
 
@@ -33,3 +33,9 @@ bun run e2e.ts    # real Pi AgentSession + faux provider: bundle reaches the mod
 
 - The bundle is hard-capped at 4,800 characters (about 1,200 tokens). Commit subjects, status paths and script names are clipped one by one first, because repo metadata is untrusted and unbounded.
 - The continuation note comes only from self-compact's per-workspace backup, `~/.pi/state/continuation-notes/<sha256(cwd)[:16]>.md`, and only when its header names exactly this workspace. Another repo's note is never replayed.
+
+## Git status result API
+
+`assembleContextBundle()` returns `statusKnown: true` and a numeric `dirtyFilesCount` only after a successful Git status query. A successful empty result is a clean tree (`0`); a failed or timed-out query returns `statusKnown: false` and `dirtyFilesCount: null`. Non-Git directories also return `false`/`null` and remain labeled as non-Git.
+
+`dirtyFilesCount` is now `number | null`, and `ContextBundleResult` includes the required `statusKnown` field. Consumers of these exported APIs must handle the unknown case; check `dirtyFilesCount !== null` before numeric operations. The Pi tool and command display unavailable status rather than treating a failed query as a clean tree.
