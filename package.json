@@ -4,7 +4,7 @@
   "description": "Dynamic context bundle priming & Jev state analysis for Pi Coding Agent",
   "main": "index.ts",
   "scripts": {
-    "test": "bun run test.ts",
+    "test": "bun run test.ts && bun run status-regression.test.ts",
     "e2e": "bun run e2e.ts"
   },
   "keywords": [

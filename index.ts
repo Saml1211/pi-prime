@@ -39,7 +39,8 @@ export interface ContextBundleOptions {
 export interface ContextBundleResult {
   markdown: string;
   branch: string;
-  dirtyFilesCount: number;
+  dirtyFilesCount: number | null;
+  statusKnown: boolean;
   stack: string;
   jevVerdict?: string;
   isGitRepo: boolean;
@@ -152,7 +153,8 @@ export async function assembleContextBundle(
 
   let branch = "not-git";
   let commit = "none";
-  let dirtyFilesCount = 0;
+  let dirtyFilesCount: number | null = null;
+  let statusKnown = false;
   let statusSummary = "";
   let diffSummary = "";
 
@@ -165,6 +167,7 @@ export async function assembleContextBundle(
 
     const statusRes = safeExecGit("git status --short", cwd);
     if (statusRes.ok) {
+      statusKnown = true;
       const statusLines = statusRes.stdout ? statusRes.stdout.split("\n").filter((l) => l.trim().length > 0) : [];
       dirtyFilesCount = statusLines.length;
       statusSummary = statusLines.slice(0, 15).map((l) => clip(l, 160)).join("\n");
@@ -173,7 +176,7 @@ export async function assembleContextBundle(
       }
     }
 
-    if (includeDiff && dirtyFilesCount > 0) {
+    if (includeDiff && dirtyFilesCount !== null && dirtyFilesCount > 0) {
       const unstagedDiff = safeExecGit("git diff --stat", cwd);
       const stagedDiff = safeExecGit("git diff --cached --stat", cwd);
       const diffParts: string[] = [];
@@ -212,7 +215,8 @@ export async function assembleContextBundle(
   // 4. TypeSafe Jev Working State Check
   let jevVerdict = "";
   if (jevApiKey && isGitRepo) {
-    const stateSummary = `Branch: ${branch}. Dirty files: ${dirtyFilesCount}. Commit: ${commit}. Stack: ${stack}.`;
+    const statusForJev = statusKnown ? String(dirtyFilesCount) : "unknown (git status unavailable)";
+    const stateSummary = `Branch: ${branch}. Dirty files: ${statusForJev}. Commit: ${commit}. Stack: ${stack}.`;
     const jevRes = await evaluateStateWithJev(stateSummary, jevApiKey, signal);
     if (jevRes) {
       const riskPct = Math.round(jevRes.uncommittedRisk * 100);
@@ -228,6 +232,8 @@ export async function assembleContextBundle(
     `- **Git Status:** ${
       !isGitRepo
         ? "Not a git repository"
+        : !statusKnown
+        ? "Status unavailable (git status failed)"
         : dirtyFilesCount === 0
         ? "Clean tree"
         : `${dirtyFilesCount} modified/untracked files`
@@ -238,7 +244,7 @@ export async function assembleContextBundle(
     sections.push(`- **Jev State:** ${jevVerdict}`);
   }
 
-  if (dirtyFilesCount > 0 && statusSummary) {
+  if (dirtyFilesCount !== null && dirtyFilesCount > 0 && statusSummary) {
     sections.push(`\n**Modified Files:**\n\`\`\`\n${statusSummary}\n\`\`\``);
   }
 
@@ -258,6 +264,7 @@ export async function assembleContextBundle(
     markdown,
     branch,
     dirtyFilesCount,
+    statusKnown,
     stack,
     jevVerdict: jevVerdict || undefined,
     isGitRepo,
@@ -307,8 +314,11 @@ export default function (pi: ExtensionAPI) {
       ctx.ui?.notify?.("Assembling dynamic context bundle...", "info");
       const bundle = await assembleContextBundle(cwd, {}, jevApiKey);
       pendingBundle = bundle.markdown;
+      const statusLabel = !bundle.isGitRepo
+        ? "not a git repository"
+        : bundle.statusKnown ? `${bundle.dirtyFilesCount} dirty` : "status unavailable";
       ctx.ui?.notify?.(
-        `[pi-prime] Primed ${bundle.branch} (${bundle.dirtyFilesCount} dirty) | Stack: ${bundle.stack}`,
+        `[pi-prime] Primed ${bundle.branch} (${statusLabel}) | Stack: ${bundle.stack}`,
         "info",
       );
     },
