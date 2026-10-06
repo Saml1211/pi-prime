@@ -18,15 +18,11 @@ Standard agent workflows either:
 
 ## Verification
 
-```bash
-node --input-type=module test.ts
-```
-
-## Verification
+With Bun and the package's peer dependencies available, run the package scripts from the repository root:
 
 ```bash
-bun run test      # unit + isolated Git-status regressions
-bun run e2e.ts    # real Pi AgentSession + faux provider: bundle reaches the model and persists
+bun run test     # unit + isolated Git-status regressions
+bun run e2e      # real Pi AgentSession + faux provider: bundle reaches the model and persists
 ```
 
 ## Bounds and scoping
