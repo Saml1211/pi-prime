@@ -43,6 +43,8 @@ console.log("✓ Pi 5-argument tool.execute contract verified");
 
 // 2. Non-git directory handling test
 const nonGitDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-nongit-"));
+// The temp dir can sit inside a repo (on the work PC the home folder has a .git); stop git looking above it.
+process.env.GIT_CEILING_DIRECTORIES = path.dirname(nonGitDir);
 try {
   const nonGitBundle = await assembleContextBundle(nonGitDir);
   assert.equal(nonGitBundle.isGitRepo, false, "Must detect non-git directory");
@@ -87,7 +89,9 @@ console.log("\nALL TESTS PASSED! pi-prime is fully hardened.");
   // huge commit subject + long paths cannot blow the budget
   const g = (...args: string[]) => cp.execFileSync("git", args, { cwd: a, stdio: "ignore" });
   g("init", "-q"); fs.writeFileSync(path.join(a, "f"), "x");
-  g("add", "f"); g("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "S".repeat(50000));
+  // Message from a file: a 50,000-char argv overflows the 32,767-char Windows command line (ENAMETOOLONG).
+  const msgFile = path.join(os.tmpdir(), `prime-msg-${process.pid}.txt`); fs.writeFileSync(msgFile, "S".repeat(50000));
+  g("add", "f"); g("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-F", msgFile); fs.rmSync(msgFile);
   // tracked long-named files, then modified: long status lines AND a long diff stat, plus a 600-char note
   for (let i = 0; i < 30; i++) fs.writeFileSync(path.join(a, "p".repeat(200) + i), "x");
   g("add", "-A"); g("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "files");
